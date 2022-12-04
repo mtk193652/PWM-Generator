@@ -19,9 +19,9 @@ uint16_t timer_top = pow(2,timer_resolution)-1;
 double max_duty_cycle = 100;
 double clock_correction = 1.005; // the oscilator may not be exactly 16 MHz, use this number to correct it 
 double clock_frequency = 16.0*pow(10,6)/clock_correction;
-double frequency_target = 1000; 
+double frequency_target = 0; 
 double period = 1/frequency_target; 
-double duty_cycle_target = 50;
+double duty_cycle_target = 0;
 bool in_range = 0;
 
 uint16_t prescalar = 1; // current prescalar
@@ -38,7 +38,7 @@ void clamp_timer(uint16_t val){
 }
 
 void update_prescalar(){
-  if (prescalar == 0){
+  if (prescalar == 1){
     TCCR2B = 0b00000001;
   } else if (prescalar == 8){
     TCCR2B = 0b00000010;
@@ -153,22 +153,6 @@ void loop() {
     Serial.print(frequency_target);
     Serial.print(" Duty Cycle: ");
     Serial.print(duty_cycle_target);
-    Serial.print(" timer_count: ");
-    Serial.print(timer_count);
-    Serial.print(" pulse_count: ");
-    Serial.print(pulse_count);
-    Serial.print(" prescalar: ");
-    Serial.print(prescalar);
-    Serial.print(" clock_cycles: ");
-    Serial.print(clock_cycles);
-    Serial.print(" needed_prescalar: ");
-    Serial.print(needed_prescalar);
-    Serial.print(" Period: ");
-    Serial.print(period);
-    Serial.print(" in_range: ");
-    Serial.print(in_range);
-    Serial.print(" duty_cycle_target != max_duty_cycle: ");
-    Serial.print(duty_cycle_target != max_duty_cycle);
     
     Serial.println("");
   }
@@ -220,7 +204,5 @@ ISR(TIMER2_COMPA_vect){
 }
 
 ISR(TIMER2_COMPB_vect){
-  if (duty_cycle_target != max_duty_cycle){
-    PORTB &= ~pulse_mask; // set step low
-  }
+  PORTB &= ~pulse_mask; // set step low
 }
