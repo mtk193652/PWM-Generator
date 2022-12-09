@@ -31,7 +31,7 @@ int enc1_position = 0; // the position counter
 byte enc1_pins_prev = 0; // the last pin state
 uint8_t enc1_intervals = 3; //number of intervals
 uint16_t enc1_interval_vec[] = {1, 100, 1000}; // intervals
-uint8_t enc1_interval_index = 0; // index
+uint8_t enc1_interval_index = 0; // index of the interval to use
 uint16_t enc1_interval = 1;
 
 void update_enc1_interval(){ // update the interval 
@@ -124,28 +124,16 @@ void select_prescalar(){
   // clamp the duty cycle
   if (duty_cycle_target<=0){ // duty cycle below zero
     duty_cycle_target = 0;
-    set_high_mask = 0;
+    set_high_mask = 0; // pwm pin can not be set high
     set_low_mask = ~pulse_mask;
   } else if (duty_cycle_target>=max_duty_cycle){ // duty cycle above the max
     duty_cycle_target = max_duty_cycle;
     set_high_mask = pulse_mask;
-    set_low_mask = 0;
+    set_low_mask = 0; // pwm pin can not be set low
   } else { // duty cycle in range
     set_high_mask = pulse_mask;
     set_low_mask = ~pulse_mask;
   }
-
-  /**
-  if (duty_cycle_target <= 0.0 || duty_cycle_target > max_duty_cycle || in_range == 0){
-    set_high_mask = 0;
-    set_low_mask = ~pulse_mask;
-  } else if (abs(duty_cycle_target - max_duty_cycle)< .001) {
-    set_high_mask = pulse_mask;
-    set_low_mask = 0;
-  } else {
-    set_high_mask = pulse_mask;
-    set_low_mask = ~pulse_mask;
-  }**/
 
   // figure out a prescalar to use
   period = 1/frequency_target; // find the period of the square wave
@@ -389,15 +377,15 @@ ISR(PCINT0_vect){ // create the interrupt for the encoder pins
 
 // stepper pulse interrupt
 ISR(TIMER2_COMPA_vect){
-  PORTD |= set_high_mask; // set step high
+  PORTD |= set_high_mask; // start a pulse
 }
 
 ISR(TIMER2_COMPB_vect){
-  PORTD &= set_low_mask; // set step low
+  PORTD &= set_low_mask; //end a pulse
 }
 
 void testdrawstyles(void) {
-  // setup to write text
+  // setup to write text on screen
   display.clearDisplay(); 
   display.setTextSize(2);
   display.setTextColor(SSD1306_WHITE);
