@@ -1,4 +1,6 @@
-#define USESERIAL
+//#define USESERIAL
+//#define PERIODICUPDATE
+
 // Screen
 #include <SPI.h>
 #include <Wire.h>
@@ -7,91 +9,89 @@
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
 #define SCREEN_HEIGHT 64 // OLED display height, in pixels
-#define OLED_RESET     -1
-#define SCREEN_ADDRESS 0x3C 
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+#define OLED_RESET     -1 // no reset pin
+#define SCREEN_ADDRESS 0x3C // I2C Address
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET); //create the display object
+bool update_screen = 0;
 
-#define NUMFLAKES     10 // Number of snowflakes in the animation example
-
-// encoder 1
+// encoder 
+#define enc_click_count 4
+byte pins_state = 0; // the current pin state
+uint16_t debounce_time = 100; // debounce time for buttons
+int last_press = 0; // time of the last press
 #define state0 0b00000000 // encoder state 0
 #define state1 0b00000001 // encoder state 1
 #define state2 0b00000011 // encoder state 2
 #define state3 0b00000010 // encoder state 3
+
+// encoder 1
 #define enc1_mask 0b00000011 // encoder pins 
 #define enc1_button_mask 0b00000100 // encoder pins 
-int32_t enc1_position = 0; // the position counter
-int32_t enc1_position_last = 0; // the position counter
-byte pins_state = 0; // the current pin state
+int enc1_position = 0; // the position counter
 byte enc1_pins_prev = 0; // the last pin state
-uint8_t enc1_intervals = 3;
-uint16_t enc1_deltas[] = {1, 100, 1000};
-uint8_t enc1_delta_index = 0;
-uint16_t enc1_delta = 1;
-uint16_t debounce_time = 100;
-int last_press = 0;
+uint8_t enc1_intervals = 3; //number of intervals
+uint16_t enc1_interval_vec[] = {1, 100, 1000}; // intervals
+uint8_t enc1_interval_index = 0; // index
+uint16_t enc1_interval = 1;
 
-void update_enc1_delta(){
-  enc1_delta_index++;
-  if (enc1_delta_index >= enc1_intervals){
-    enc1_delta_index = 0;
+void update_enc1_interval(){ // update the interval 
+  enc1_interval_index++; // change to the next interval
+  if (enc1_interval_index >= enc1_intervals){
+    enc1_interval_index = 0;
   }
-  enc1_delta = enc1_deltas[enc1_delta_index];
+  enc1_interval = enc1_interval_vec[enc1_interval_index]; // update the interval
+  update_screen = 1; // screen needs to be updated
 }
 
 // encoder 2
 #define enc2_offset 3
 #define enc2_mask 0b00011000 // encoder pins 
 #define enc2_button_mask 0b00100000 // encoder pins 
-double enc2_position = 0; // the position counter
-double enc2_position_last = 0; // the position counter
+int enc2_position = 0; // the position counter
 byte enc2_pins_prev = 0; // the last pin state
-uint8_t enc2_intervals = 3;
-double enc2_deltas[] = {0.1, 1, 10};
-uint8_t enc2_delta_index = 1;
-double enc2_delta = 1;
+uint8_t enc2_intervals = 3; //number of intervals
+double enc2_interval_vec[] = {0.1, 1, 10}; // intervals
+uint8_t enc2_interval_index = 1; // index
+double enc2_interval = 1;
 
-
-void update_enc2_delta(){
-  enc2_delta_index++;
-  if (enc2_delta_index >= enc2_intervals){
-    enc2_delta_index = 0;
+void update_enc2_interval(){ // update the interval 
+  enc2_interval_index++; // change to the next interval
+  if (enc2_interval_index >= enc2_intervals){
+    enc2_interval_index = 0;
   }
-  enc2_delta = enc2_deltas[enc2_delta_index];
+  enc2_interval = enc2_interval_vec[enc2_interval_index]; // update the interval
+  update_screen = 1; // screen needs to be updated
 }
 
 // pulse control
 #define pulse_mask 0b10000000 // pulse pin 
-#define timer_resolution 8
-uint16_t timer_top = pow(2,timer_resolution)-1;
+#define timer_resolution 8 // resolution of the timer in use
+uint16_t timer_top = pow(2,timer_resolution)-1; // top value
+uint8_t set_high_mask = 0; // mask for setting pulse high
+uint8_t set_low_mask = 0; // mask for setting pulse low
 
 // timing 
-double max_duty_cycle = 100;
+double max_duty_cycle = 100; // max duty cycle 100%
+double max_frequency = 200000; // max frequency
 double clock_correction = 1.005; // the oscilator may not be exactly 16 MHz, use this number to correct it 
-double clock_frequency = 16.0*pow(10,6)/clock_correction;
-double frequency_target = 0; 
-double period = 1/frequency_target; 
-double duty_cycle_target = 0;
-bool in_range = 0;
-
+double clock_frequency = 16.0*pow(10,6)/clock_correction; // clock speed
+double frequency_target = 0; // frequency to try to hit
+double period = 1/frequency_target; // period of the square wave
+double duty_cycle_target = 0; // duty cycle to try to hit
 uint16_t prescalar = 1; // current prescalar
 uint16_t prescalars[] = {1, 8, 32, 64, 128, 256, 1024}; // current prescalar
 uint16_t timer_count = 0; // current timer count
-uint16_t pulse_count = 0;
-double needed_prescalar = 0;
-double clock_cycles = 0;
+uint16_t pulse_count = 0; // count for the match where pulse ends
+double needed_prescalar = 0; // prescalar to use
+double clock_cycles = 0; // clock cycles needed for the period of the square wave
 
-uint8_t set_high_mask = 0;
-uint8_t set_low_mask = 0;
-
-
-void clamp_timer(uint16_t val){
+void clamp_timer(uint16_t val){ // ensures that the value of the timer is less than the top value
   if (val > timer_top){
     val = timer_top;
   }
 }
 
-void update_prescalar(){
+void update_prescalar(){ // update the prescalar
   if (prescalar == 1){
     TCCR2B = 0b00000001;
   } else if (prescalar == 8){
@@ -109,18 +109,51 @@ void update_prescalar(){
   }
 }
 
-#define serial_update 100
-int last_millis = 0;
-int delta = 0;
+#define update_delay 100
+int last_millis = 0; // last time something was displayed
+int delta = 0; // current time since last update
 
 void select_prescalar(){
+  // clamp the frequency
   if (frequency_target<0){
     frequency_target = 0;
+  } else if (frequency_target>max_frequency){
+    frequency_target = max_frequency;
   }
-  period = 1/frequency_target; 
-  clock_cycles = period * clock_frequency;
-  needed_prescalar = clock_cycles/timer_top;
-  in_range = 1;
+
+  // clamp the duty cycle
+  if (duty_cycle_target<=0){ // duty cycle below zero
+    duty_cycle_target = 0;
+    set_high_mask = 0;
+    set_low_mask = ~pulse_mask;
+  } else if (duty_cycle_target>=max_duty_cycle){ // duty cycle above the max
+    duty_cycle_target = max_duty_cycle;
+    set_high_mask = pulse_mask;
+    set_low_mask = 0;
+  } else { // duty cycle in range
+    set_high_mask = pulse_mask;
+    set_low_mask = ~pulse_mask;
+  }
+
+  /**
+  if (duty_cycle_target <= 0.0 || duty_cycle_target > max_duty_cycle || in_range == 0){
+    set_high_mask = 0;
+    set_low_mask = ~pulse_mask;
+  } else if (abs(duty_cycle_target - max_duty_cycle)< .001) {
+    set_high_mask = pulse_mask;
+    set_low_mask = 0;
+  } else {
+    set_high_mask = pulse_mask;
+    set_low_mask = ~pulse_mask;
+  }**/
+
+  // figure out a prescalar to use
+  period = 1/frequency_target; // find the period of the square wave
+  clock_cycles = period * clock_frequency; // number of clock cycles in one period of the square wave
+  needed_prescalar = clock_cycles/timer_top; // estimate the prescalar that would be needed
+  bool in_range = 1; // if there is not a good prescalar it will be out of range
+
+  // check each of the available prescalars to see if the needed prescalar is less than the available ones
   if (needed_prescalar<prescalars[0]){
     prescalar = prescalars[0];
   } else if (needed_prescalar<prescalars[1]){
@@ -137,33 +170,25 @@ void select_prescalar(){
     prescalar = prescalars[6];
   } else {
     prescalar = prescalars[6];
-    in_range = 0;
+    in_range = 0; // if the largest prescalar does not work its out of range
   }
 
-  if (duty_cycle_target <= 0.0 || duty_cycle_target > max_duty_cycle || in_range == 0){
-    set_high_mask = 0;
-    set_low_mask = ~pulse_mask;
-  } else if ((duty_cycle_target - max_duty_cycle)< .001) {
-    set_high_mask = pulse_mask;
-    set_low_mask = 0;
-  } else {
-    set_high_mask = pulse_mask;
-    set_low_mask = ~pulse_mask;
-  }
-
-  double period_count = clock_cycles/prescalar;
-  timer_count = period_count;
-  clamp_timer(&timer_count);
-  double high_count = period_count * duty_cycle_target / max_duty_cycle;
-  pulse_count = high_count;
-  clamp_timer(&high_count);
+  // find the timer values
+  timer_count = clock_cycles/prescalar; // the count for the entire period
+  clamp_timer(&timer_count); // clamp this value
+  pulse_count = timer_count * duty_cycle_target / max_duty_cycle; // the count where the pwm pin will be high
+  clamp_timer(&pulse_count); // clamp this value
   
-  if (pulse_count >= timer_count){ // ensures interrupt B occurrs before A
+  // ensures interrupt B occurrs before A
+  if (pulse_count >= timer_count){
     pulse_count = timer_count-1;
   }
 
+  // update the timer values
   OCR2A = timer_count;
   OCR2B = pulse_count;
+
+  // update the prescalar
   update_prescalar();
 }
 
@@ -181,34 +206,36 @@ void setup() {
   DDRB &= ~enc1_button_mask; // set the pin mode for the encoder pins
   DDRB &= ~enc2_mask; // set the pin mode for the encoder pins
   DDRB &= ~enc2_button_mask; // set the pin mode for the encoder pins
-  DDRD |= pulse_mask; // set the pin mode for the enable pin
+  DDRD |= pulse_mask; // set the pin mode for the pulse pin
 
   // interrupt setup for encoder
   SREG |= 0b10000000; // enable global interrupts
   PCICR |= 0b00000001; // enable port change interrupts on PCIE0 (PCINT7-0)
-  PCMSK0 |= enc1_mask | enc1_button_mask; // enable interrupts on D8 and D9
-  PCMSK0 |= enc2_mask | enc2_button_mask; // enable interrupts on D8 and D9
+  PCMSK0 |= enc1_mask; // enable interrupts for enc1
+  PCMSK0 |= enc1_button_mask; // enable interrupts for enc1 button
+  PCMSK0 |= enc2_mask; // enable interrupts for enc2
+  PCMSK0 |= enc2_button_mask; // enable interrupts for enc2 button
 
   // Timer Interrupt
   TCCR2A = 0b00000010; // Put the timer in CTC mode
   TCCR2B = 0b00000100; // 64 prescalar
-  TIMSK2 |= B00000110; // Enable compare interrupts
+  TIMSK2 |= B00000110; // Enable compare interrupts A and B
   select_prescalar();
 
   display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
   display.clearDisplay();
+  select_prescalar();
+  testdrawstyles();
 
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 String thing;
 void loop() {
-  // use serial to recieve target positions
   #ifdef USESERIAL
+    // check if there is a value recieved from serial
     if(Serial.available()>1){
       thing = Serial.readString();
-      Serial.println(" ");
-      //Serial.println(thing); 
       if (thing[0]==100){
         thing[0] = 32;
         duty_cycle_target = thing.toDouble();
@@ -226,134 +253,135 @@ void loop() {
     }
   #endif
   
-  if (enc1_position != enc1_position_last){
-    if (enc1_position<0){
-      enc1_position = 0;
+  // check if the frequency has changed
+  if (abs(enc1_position) >= enc_click_count ){
+    double intermediate = frequency_target + floor(enc1_position/enc_click_count)*enc1_interval; // round down the change by the current interval
+    // clamp the result
+    if (intermediate<0){
+      intermediate = 0;
+    } else if (intermediate>max_frequency){
+      intermediate = max_frequency;
     }
-    enc1_position_last = enc1_position;
-    enc1_position = round(enc1_position/enc1_delta/4)*enc1_delta;
-    frequency_target = enc1_position;
-    select_prescalar();
+    frequency_target = intermediate; // update the frequency target
+    enc1_position = 0; // reset the encoder position
+    select_prescalar(); // update the prescalar
+    update_screen = 1; // screen needs to be updated
   }
 
-  if (enc2_position != enc2_position_last){
-    if (enc2_position<0){
-      enc2_position = 0;
+  // check if the duty cycle has changed
+  if (abs(enc2_position) >= enc_click_count ){
+    double intermediate = duty_cycle_target + floor(enc2_position/enc_click_count)*enc2_interval; // round down the change by the current interval
+    // clamp the result
+    if (intermediate<0){
+      intermediate = 0;
+    } else if (intermediate>max_duty_cycle){
+      intermediate = max_duty_cycle;
     }
-    enc2_position_last = enc2_position;
-    enc2_position = round(enc2_position/enc2_delta/4)*enc2_delta;
-    duty_cycle_target = enc2_position;
-    select_prescalar();
+    duty_cycle_target = intermediate; // update the duty cycle target
+    enc2_position = 0; // reset the encoder position
+    select_prescalar(); // update the prescalar
+    update_screen = 1; // screen needs to be updated
   }
   
-
-  delta = millis() - last_millis;
-  if (delta > serial_update){
-    last_millis = millis();
-    // print current info
-    #ifdef USESERIAL
-      Serial.print("Frequency: ");
-      Serial.print(frequency_target);
-      Serial.print(" Duty Cycle: ");
-      Serial.print(duty_cycle_target);
-      Serial.print(" timer top: ");
-      Serial.print(timer_count);
-      Serial.print(" pulse compare: ");
-      Serial.print(pulse_count);
-      Serial.print(" prescalar: ");
-      Serial.print(prescalar);
-      Serial.print(" enc1_position: ");
-      Serial.print(enc1_position);
-      Serial.print(" enc1_delta: ");
-      Serial.print(enc1_delta);
-      Serial.print(" enc2_position: ");
-      Serial.print(enc2_position);
-      Serial.print(" enc2_delta: ");
-      Serial.print(enc2_delta);
-      
-      Serial.println("");
-      delay(100);
-      
-    #endif
+  // update the screen if needed
+  if (update_screen){
     testdrawstyles();
+    update_screen = 0;
   }
 
-  
-  // wait before printing again
-  //delay(20);
+  #ifdef PERIODICUPDATE
+    // make updates at a constant rate
+    delta = millis() - last_millis;
+    if (delta > update_delay){
+      last_millis = millis();
+      #ifdef USESERIAL
+        Serial.print("Frequency: ");
+        Serial.print(frequency_target);
+        Serial.print(" Duty Cycle: ");
+        Serial.print(duty_cycle_target);
+        Serial.print(" enc1_interval: ");
+        Serial.print(enc1_interval);
+        Serial.print(" enc1_position: ");
+        Serial.print(enc1_position);
+        Serial.println("");
+      #endif
+      testdrawstyles();
+    }
+  #endif
+
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 // encoder pin change interrupt
 ISR(PCINT0_vect){ // create the interrupt for the encoder pins
-  //Serial.println("*");
-
   int this_time = millis();
   pins_state = PINB & enc1_mask; // get the pin state for only the encoder pins
   if (pins_state == state0) { // check current state
     if (enc1_pins_prev == state3){ // if its moving forward increase the count
-      enc1_position+=enc1_delta;
+      enc1_position++;
     } else if (enc1_pins_prev == state1){ // if its moving backward decrease the count
-      enc1_position-=enc1_delta;
+      enc1_position--;
     }
   } else if (pins_state == state1) { // check current state
     if (enc1_pins_prev == state0){ // if its moving forward increase the count
-      enc1_position+=enc1_delta;
+      enc1_position++;
     } else if (enc1_pins_prev == state2){ // if its moving backward decrease the count
-      enc1_position-=enc1_delta;
+      enc1_position--;
     }
   } else if (pins_state == state2) { // check current state
     if (enc1_pins_prev == state1){ // if its moving forward increase the count
-      enc1_position+=enc1_delta;
+      enc1_position++;
     } else if (enc1_pins_prev == state3){ // if its moving backward decrease the count
-      enc1_position-=enc1_delta;
+      enc1_position--;
     }
   } else if (pins_state == state3) { // check current state
     if (enc1_pins_prev == state2){ // if its moving forward increase the count
-      enc1_position+=enc1_delta;
+      enc1_position++;
     } else if (enc1_pins_prev == state0){ // if its moving backward decrease the count
-      enc1_position-=enc1_delta;
+      enc1_position--;
     }
   }
   enc1_pins_prev = pins_state; // update the previous state
 
+  // check enc1 button
   if ((PINB & enc1_button_mask) && ((this_time - last_press) > debounce_time)){
-    last_press = this_time;
-    update_enc1_delta();
+    last_press = this_time; // updatet the debounce time
+    update_enc1_interval(); // update the interval
   }
 
   pins_state = (PINB & enc2_mask)>>enc2_offset; // get the pin state for only the encoder pins
   if (pins_state == state0) { // check current state
     if (enc2_pins_prev == state3){ // if its moving forward increase the count
-      enc2_position-=enc2_delta;
-    } else if (enc1_pins_prev == state1){ // if its moving backward decrease the count
-      enc2_position+=enc2_delta;
+      enc2_position--;
+    } else if (enc2_pins_prev == state1){ // if its moving backward decrease the count
+      enc2_position++;
     }
   } else if (pins_state == state1) { // check current state
     if (enc2_pins_prev == state0){ // if its moving forward increase the count
-      enc2_position-=enc2_delta;
+      enc2_position--;
     } else if (enc2_pins_prev == state2){ // if its moving backward decrease the count
-      enc2_position+=enc2_delta;
+      enc2_position++;
     }
   } else if (pins_state == state2) { // check current state
     if (enc2_pins_prev == state1){ // if its moving forward increase the count
-      enc2_position-=enc2_delta;
+      enc2_position--;
     } else if (enc2_pins_prev == state3){ // if its moving backward decrease the count
-      enc2_position+=enc2_delta;
+      enc2_position++;
     }
   } else if (pins_state == state3) { // check current state
     if (enc2_pins_prev == state2){ // if its moving forward increase the count
-      enc2_position-=enc2_delta;
+      enc2_position--;
     } else if (enc2_pins_prev == state0){ // if its moving backward decrease the count
-      enc2_position+=enc2_delta;
+      enc2_position++;
     }
   }
   enc2_pins_prev = pins_state; // update the previous state
 
+  // check enc2 button
   if ((PINB & enc2_button_mask) && ((this_time - last_press) > debounce_time)){
-    last_press = this_time;
-    update_enc2_delta();
+    last_press = this_time; // updatet the debounce time
+    update_enc2_interval(); // update the interval
   }
 }
 
@@ -369,12 +397,13 @@ ISR(TIMER2_COMPB_vect){
 }
 
 void testdrawstyles(void) {
-  display.clearDisplay();
+  // setup to write text
+  display.clearDisplay(); 
+  display.setTextSize(2);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0,0);
 
-  display.setTextSize(2);             // Normal 1:1 pixel scale
-  display.setTextColor(SSD1306_WHITE);        // Draw white text
-  display.setCursor(0,0);             // Start at top-left corner
-
+  // print frequency target with leading zeros
   if (frequency_target<10){
     display.print("  ");
   } else if (frequency_target<100){
@@ -384,7 +413,7 @@ void testdrawstyles(void) {
   } else if (frequency_target<10000){
     display.print(" ");
   }
-
+  // use Hz or kHz as needed
   if (frequency_target>=100000){
     display.print(frequency_target/1000, 3);
     display.println("kHz");
@@ -396,19 +425,20 @@ void testdrawstyles(void) {
     display.println(" Hz");
   }
 
-  if (enc1_delta>=1000){
-    display.print(" ");
-  } else if (enc1_delta>=100){
+  // print the frequency interval with leading zeros
+  if (enc1_interval>=1000){
     display.print("  ");
-  } else if (enc1_delta>=10){
+  } else if (enc1_interval>=100){
     display.print("   ");
-  } else {
+  } else if (enc1_interval>=10){
     display.print("    ");
+  } else {
+    display.print("     ");
   }
-  
-  display.print(enc1_delta);
+  display.print(enc1_interval);
   display.println(" Hz");
   
+  // print the duty cycle with leading zeros
   if (duty_cycle_target<100){
     display.print(" ");
   }
@@ -418,15 +448,17 @@ void testdrawstyles(void) {
   display.print(duty_cycle_target);
   display.println(" %");
 
-  if (enc2_delta<100){
+  // print the duty cycle interval with leading zeros
+  if (enc2_interval<100){
     display.print(" ");
   }
-  if (enc2_delta<10){
+  if (enc2_interval<10){
     display.print(" ");
   }
-  display.print(enc2_delta);
+  display.print(enc2_interval);
   display.println(" %");
   display.println(" ");
 
+  // update the display
   display.display();
 }
