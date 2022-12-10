@@ -73,7 +73,7 @@ uint8_t set_low_mask = 0; // mask for setting pulse low
 // timing 
 double max_duty_cycle = 100; // max duty cycle 100%
 double max_frequency = 140000; // max frequency
-double clock_correction = 1.005; // the oscilator may not be exactly 16 MHz, use this number to correct it 
+double clock_correction = 1.005; // the oscilator may not be exactly 16 MHz, use this number to correct the frequency
 double clock_frequency = 16.0*pow(10,6)/clock_correction; // clock speed
 double frequency_target = 0; // frequency to try to hit
 double period = 1/frequency_target; // period of the square wave
@@ -84,6 +84,11 @@ uint16_t timer_count = 0; // current timer count
 uint16_t pulse_count = 0; // count for the match where pulse ends
 double needed_prescalar = 0; // prescalar to use
 double clock_cycles = 0; // clock cycles needed for the period of the square wave
+#define offset_at_max 45 // this is best for correcting the duty cycle
+
+uint8_t get_offset(){
+  return offset_at_max*frequency_target/max_frequency;
+}
 
 // low frequency timing
 #define minFrequency 0.1
@@ -172,7 +177,7 @@ void select_prescalar(){
     // find the timer values
     timer_count = clock_cycles/prescalar; // the count for the entire period
     clampTimer(&timer_count); // clamp this value
-    pulse_count = timer_count*duty_cycle_target/max_duty_cycle; // the count where the pwm pin will be high
+    pulse_count = (clock_cycles+get_offset())/prescalar*duty_cycle_target/max_duty_cycle; // the count where the pwm pin will be high
     clampTimer(&pulse_count); // clamp this value
     
     TIMSK2 |= B00000110; // Enable compare interrupts A and B
@@ -420,7 +425,9 @@ ISR(TIMER2_COMPA_vect){
 }
 
 ISR(TIMER2_COMPB_vect){
-  PORTD &= set_low_mask; //end a pulse
+  //if (in_range){
+    PORTD &= set_low_mask; //end a pulse
+  //}
 }
 
 void testdrawstyles(void) {
