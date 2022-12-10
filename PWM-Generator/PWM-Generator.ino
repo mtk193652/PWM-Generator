@@ -72,10 +72,10 @@ uint8_t set_low_mask = 0; // mask for setting pulse low
 
 // timing 
 double max_duty_cycle = 100; // max duty cycle 100%
-double max_frequency = 200000; // max frequency
+double max_frequency = 140000; // max frequency
 double clock_correction = 1.005; // the oscilator may not be exactly 16 MHz, use this number to correct it 
 double clock_frequency = 16.0*pow(10,6)/clock_correction; // clock speed
-double frequency_target = 50; // frequency to try to hit
+double frequency_target = 0; // frequency to try to hit
 double period = 1/frequency_target; // period of the square wave
 double duty_cycle_target = 50; // duty cycle to try to hit
 uint16_t prescalar = 1; // current prescalar
@@ -86,7 +86,7 @@ double needed_prescalar = 0; // prescalar to use
 double clock_cycles = 0; // clock cycles needed for the period of the square wave
 
 // low frequency timing
-#define minFrequency 10
+#define minFrequency 0.1
 uint32_t currentIterations = 0;
 uint32_t iterationsInPeriod = 0;
 uint32_t iterationsInPulse = 0;
@@ -177,21 +177,20 @@ void select_prescalar(){
     
     TIMSK2 |= B00000110; // Enable compare interrupts A and B
 
-    // update the timer values
-    OCR2A = timer_count;
-    OCR2B = pulse_count;
+  } else if (frequency_target<1) {
+    TIMSK2 |= B00000110; // Enable compare interrupts A and B
+    set_high_mask = 0; // pwm pin can not be set high
+    set_low_mask = ~pulse_mask;
+    timer_count = timer_top;
   } else {
-    prescalar = prescalars[1];
+    prescalar = prescalars[0];
     iterationsInPeriod = clock_cycles/prescalar/timer_top;
     iterationsInPulse = iterationsInPeriod*duty_cycle_target/max_duty_cycle;
-    Serial.println(iterationsInPeriod);
-    Serial.println(iterationsInPulse);
 
-    TIMSK2 |= B00000010; // Enable compare interrupts A and B
+    TIMSK2 &= ~B00000100; // Enable compare interrupts A and B
     set_high_mask = pulse_mask;
     set_low_mask = ~pulse_mask;
     timer_count = timer_top;
-    pulse_count = timer_top/2;
   }
 
   
@@ -216,7 +215,7 @@ void setup() {
     Serial.println("Starting");
     Serial.println("send dXXX to change duty cycle (%) or fXXX to change frequency (Hz)");
   #endif
-  Serial.begin(9600); // start serial to send back data
+  //Serial.begin(9600); // start serial to send back data
   // pin modes
   DDRB &= ~enc1_mask; // set the pin mode for the encoder pins
   DDRB &= ~enc1_button_mask; // set the pin mode for the encoder pins
@@ -315,10 +314,12 @@ void loop() {
         Serial.print(frequency_target);
         Serial.print(" Duty Cycle: ");
         Serial.print(duty_cycle_target);
-        Serial.print(" enc1_interval: ");
-        Serial.print(enc1_interval);
-        Serial.print(" enc1_position: ");
-        Serial.print(enc1_position);
+        Serial.print(" timer_count: ");
+        Serial.print(timer_count);
+        Serial.print(" pulse_count: ");
+        Serial.print(pulse_count);
+        Serial.print(" prescalar: ");
+        Serial.print(prescalar);
         Serial.println("");
       #endif
       testdrawstyles();
@@ -408,7 +409,6 @@ ISR(TIMER2_COMPA_vect){
   if (in_range){
     PORTD |= set_high_mask; // start a pulse
   } else if (currentIterations >= iterationsInPeriod) {
-    //currentIterations++;
     currentIterations = 0;
     PORTD |= set_high_mask; // start a pulse
   } else if (currentIterations == iterationsInPulse) {
@@ -420,9 +420,7 @@ ISR(TIMER2_COMPA_vect){
 }
 
 ISR(TIMER2_COMPB_vect){
-  if (in_range){
-    PORTD &= set_low_mask; //end a pulse
-  }
+  PORTD &= set_low_mask; //end a pulse
 }
 
 void testdrawstyles(void) {
