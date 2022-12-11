@@ -1,5 +1,5 @@
-//#define USESERIAL
-//#define PERIODICUPDATE
+//#define USESERIAL // this will enable the serial connection 
+//#define PERIODICUPDATE // this will cause periodic updates 
 
 // Screen
 #include <SPI.h>
@@ -34,15 +34,6 @@ uint16_t enc1_interval_vec[] = {1, 100, 1000}; // intervals
 uint8_t enc1_interval_index = 0; // index of the interval to use
 uint16_t enc1_interval = 1;
 
-void update_enc1_interval(){ // update the interval 
-  enc1_interval_index++; // change to the next interval
-  if (enc1_interval_index >= enc1_intervals){
-    enc1_interval_index = 0;
-  }
-  enc1_interval = enc1_interval_vec[enc1_interval_index]; // update the interval
-  update_screen = 1; // screen needs to be updated
-}
-
 // encoder 2
 #define enc2_offset 3
 #define enc2_mask 0b00011000 // encoder pins 
@@ -53,15 +44,6 @@ uint8_t enc2_intervals = 3; //number of intervals
 double enc2_interval_vec[] = {0.1, 1, 10}; // intervals
 uint8_t enc2_interval_index = 1; // index
 double enc2_interval = 1;
-
-void update_enc2_interval(){ // update the interval 
-  enc2_interval_index++; // change to the next interval
-  if (enc2_interval_index >= enc2_intervals){
-    enc2_interval_index = 0;
-  }
-  enc2_interval = enc2_interval_vec[enc2_interval_index]; // update the interval
-  update_screen = 1; // screen needs to be updated
-}
 
 // pulse control
 #define pulse_mask 0b10000000 // pulse pin 
@@ -77,18 +59,14 @@ double clock_correction = 1.005; // the oscilator may not be exactly 16 MHz, use
 double clock_frequency = 16.0*pow(10,6)/clock_correction; // clock speed
 double frequency_target = 0; // frequency to try to hit
 double period = 1/frequency_target; // period of the square wave
-double duty_cycle_target = 50; // duty cycle to try to hit
+double duty_cycle_target = 0; // duty cycle to try to hit
 uint16_t prescalar = 1; // current prescalar
 uint16_t prescalars[] = {1, 8, 32, 64, 128, 256, 1024}; // current prescalar
-uint16_t timer_count = 0; // current timer count
-uint16_t pulse_count = 0; // count for the match where pulse ends
+uint8_t timer_count = 0; // current timer count
+uint8_t pulse_count = 0; // count for the match where pulse ends
 double needed_prescalar = 0; // prescalar to use
 double clock_cycles = 0; // clock cycles needed for the period of the square wave
 #define offset_at_max 45 // this is best for correcting the duty cycle
-
-uint8_t get_offset(){
-  return offset_at_max*frequency_target/max_frequency;
-}
 
 // low frequency timing
 #define minFrequency 0.1
@@ -97,123 +75,12 @@ uint32_t iterationsInPeriod = 0;
 uint32_t iterationsInPulse = 0;
 bool in_range = 1; // if there is not a good prescalar it will be out of range
 
-void clampTimer(uint16_t val){ // ensures that the value of the timer is less than the top value
-  if (val > timer_top){
-    val = timer_top;
-  }
-}
-
-void update_prescalar(){ // update the prescalar
-  if (prescalar == 1){
-    TCCR2B = 0b00000001;
-  } else if (prescalar == 8){
-    TCCR2B = 0b00000010;
-  } else if (prescalar == 32){
-    TCCR2B = 0b00000011;
-  } else if (prescalar == 64){
-    TCCR2B = 0b00000100;
-  } else if (prescalar == 128){
-    TCCR2B = 0b00000101;
-  } else if (prescalar == 256){
-    TCCR2B = 0b00000110;
-  } else if (prescalar == 1024){
-    TCCR2B = 0b00000111;
-  }
-}
-
+// periodic update values
 #define update_delay 100
 int last_millis = 0; // last time something was displayed
-int delta = 0; // current time since last update
+int timeDelta = 0; // current time since last update
 
-void select_prescalar(){
-  // clamp the frequency
-  if (frequency_target<0){
-    frequency_target = 0;
-  } else if (frequency_target>max_frequency){
-    frequency_target = max_frequency;
-  }
-
-  // clamp the duty cycle
-  if (duty_cycle_target<=0){ // duty cycle below zero
-    duty_cycle_target = 0;
-    set_high_mask = 0; // pwm pin can not be set high
-    set_low_mask = ~pulse_mask;
-  } else if (duty_cycle_target>=max_duty_cycle){ // duty cycle above the max
-    duty_cycle_target = max_duty_cycle;
-    set_high_mask = pulse_mask;
-    set_low_mask = 0; // pwm pin can not be set low
-  } else { // duty cycle in range
-    set_high_mask = pulse_mask;
-    set_low_mask = ~pulse_mask;
-  }
-
-  // figure out a prescalar to use
-  period = 1/frequency_target; // find the period of the square wave
-  clock_cycles = period * clock_frequency; // number of clock cycles in one period of the square wave
-  needed_prescalar = clock_cycles/timer_top; // estimate the prescalar that would be needed
-  
-  // check each of the available prescalars to see if the needed prescalar is less than the available ones
-  in_range = 1;
-  if (needed_prescalar<prescalars[0]){
-    prescalar = prescalars[0];
-  } else if (needed_prescalar<prescalars[1]){
-    prescalar = prescalars[1];
-  } else if (needed_prescalar<prescalars[2]){
-    prescalar = prescalars[2];
-  } else if (needed_prescalar<prescalars[3]){
-    prescalar = prescalars[3];
-  } else if (needed_prescalar<prescalars[4]){
-    prescalar = prescalars[4];
-  } else if (needed_prescalar<prescalars[5]){
-    prescalar = prescalars[5];
-  } else if (needed_prescalar<prescalars[6]){
-    prescalar = prescalars[6];
-  } else {
-    prescalar = prescalars[6];
-    in_range = 0; // if the largest prescalar does not work its out of range
-  }
-
-  if (in_range){
-    // find the timer values
-    timer_count = clock_cycles/prescalar; // the count for the entire period
-    clampTimer(&timer_count); // clamp this value
-    pulse_count = (clock_cycles+get_offset())/prescalar*duty_cycle_target/max_duty_cycle; // the count where the pwm pin will be high
-    clampTimer(&pulse_count); // clamp this value
-    
-    TIMSK2 |= B00000110; // Enable compare interrupts A and B
-
-  } else if (frequency_target<1) {
-    TIMSK2 |= B00000110; // Enable compare interrupts A and B
-    set_high_mask = 0; // pwm pin can not be set high
-    set_low_mask = ~pulse_mask;
-    timer_count = timer_top;
-  } else {
-    prescalar = prescalars[0];
-    iterationsInPeriod = clock_cycles/prescalar/timer_top;
-    iterationsInPulse = iterationsInPeriod*duty_cycle_target/max_duty_cycle;
-
-    TIMSK2 &= ~B00000100; // Enable compare interrupts A and B
-    set_high_mask = pulse_mask;
-    set_low_mask = ~pulse_mask;
-    timer_count = timer_top;
-  }
-
-  
-  // ensures interrupt B occurrs before A
-  if (pulse_count >= timer_count){
-    pulse_count = timer_count-1;
-  }
-
-  // update the timer values
-  OCR2A = timer_count;
-  OCR2B = pulse_count;
-
-  // update the prescalar
-  update_prescalar();
-}
-
-///////////////////////////////////////////////////////////////////////////////////////////////
-
+// SETUP //////////////////////////////////////////////////////////////////////////////////////////////
 void setup() {
   #ifdef USESERIAL
     Serial.begin(115200); // start serial to send back data
@@ -240,19 +107,19 @@ void setup() {
   TCCR2A = 0b00000010; // Put the timer in CTC mode
   TCCR2B = 0b00000100; // 64 prescalar
   TIMSK2 |= B00000110; // Enable compare interrupts A and B
-  select_prescalar();
+  calculateTimers();
 
   display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS);
   display.clearDisplay();
-  select_prescalar();
-  testdrawstyles();
+  calculateTimers();
+  updateScreen();
 
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-String thing;
+// LOOP ///////////////////////////////////////////////////////////////////////////////////////////////
 void loop() {
   #ifdef USESERIAL
+    String thing; // read into this string
     // check if there is a value recieved from serial
     if(Serial.available()>1){
       thing = Serial.readString();
@@ -269,7 +136,7 @@ void loop() {
         thing[0] = 32;
         frequency_target = thing.toDouble();
       }  
-      select_prescalar();
+      calculateTimers();
     }
   #endif
   
@@ -284,7 +151,7 @@ void loop() {
     }
     frequency_target = intermediate; // update the frequency target
     enc1_position = 0; // reset the encoder position
-    select_prescalar(); // update the prescalar
+    calculateTimers(); // update the prescalar
     update_screen = 1; // screen needs to be updated
   }
 
@@ -299,20 +166,20 @@ void loop() {
     }
     duty_cycle_target = intermediate; // update the duty cycle target
     enc2_position = 0; // reset the encoder position
-    select_prescalar(); // update the prescalar
+    calculateTimers(); // update the prescalar
     update_screen = 1; // screen needs to be updated
   }
   
   // update the screen if needed
   if (update_screen){
-    testdrawstyles();
+    updateScreen();
     update_screen = 0;
   }
 
   #ifdef PERIODICUPDATE
     // make updates at a constant rate
-    delta = millis() - last_millis;
-    if (delta > update_delay){
+    timeDelta = millis() - last_millis;
+    if (timeDelta > update_delay){
       last_millis = millis();
       #ifdef USESERIAL
         Serial.print("Frequency: ");
@@ -327,14 +194,13 @@ void loop() {
         Serial.print(prescalar);
         Serial.println("");
       #endif
-      testdrawstyles();
+      updateScreen();
     }
   #endif
 
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-
+// INTERRUPTS /////////////////////////////////////////////////////////////////////////////////////////
 // encoder pin change interrupt
 ISR(PCINT0_vect){ // create the interrupt for the encoder pins
   int this_time = millis();
@@ -407,9 +273,7 @@ ISR(PCINT0_vect){ // create the interrupt for the encoder pins
   }
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////
-
-// stepper pulse interrupt
+// Start the pulse
 ISR(TIMER2_COMPA_vect){
   if (in_range){
     PORTD |= set_high_mask; // start a pulse
@@ -424,13 +288,144 @@ ISR(TIMER2_COMPA_vect){
   }
 }
 
+// End the pulse
 ISR(TIMER2_COMPB_vect){
   //if (in_range){
     PORTD &= set_low_mask; //end a pulse
   //}
 }
 
-void testdrawstyles(void) {
+// FUNCTIONS //////////////////////////////////////////////////////////////////////////////////////////
+
+// find the values to set the timers
+void calculateTimers(){
+  // clamp the frequency
+  if (frequency_target<0){
+    frequency_target = 0;
+  } else if (frequency_target>max_frequency){
+    frequency_target = max_frequency;
+  }
+
+  // clamp the duty cycle
+  if (duty_cycle_target<=0){ // duty cycle below zero
+    duty_cycle_target = 0;
+    set_high_mask = 0; // pwm pin can not be set high
+    set_low_mask = ~pulse_mask;
+  } else if (duty_cycle_target>=max_duty_cycle){ // duty cycle above the max
+    duty_cycle_target = max_duty_cycle;
+    set_high_mask = pulse_mask;
+    set_low_mask = 0; // pwm pin can not be set low
+  } else { // duty cycle in range
+    set_high_mask = pulse_mask;
+    set_low_mask = ~pulse_mask;
+  }
+
+  // figure out a prescalar to use
+  period = 1/frequency_target; // find the period of the square wave
+  clock_cycles = period * clock_frequency; // number of clock cycles in one period of the square wave
+  needed_prescalar = clock_cycles/timer_top; // estimate the prescalar that would be needed
+  
+  // check each of the available prescalars to see if the needed prescalar is less than the available ones
+  in_range = 1;
+  if (needed_prescalar<prescalars[0]){
+    prescalar = prescalars[0];
+  } else if (needed_prescalar<prescalars[1]){
+    prescalar = prescalars[1];
+  } else if (needed_prescalar<prescalars[2]){
+    prescalar = prescalars[2];
+  } else if (needed_prescalar<prescalars[3]){
+    prescalar = prescalars[3];
+  } else if (needed_prescalar<prescalars[4]){
+    prescalar = prescalars[4];
+  } else if (needed_prescalar<prescalars[5]){
+    prescalar = prescalars[5];
+  } else if (needed_prescalar<prescalars[6]){
+    prescalar = prescalars[6];
+  } else {
+    prescalar = prescalars[6];
+    in_range = 0; // if the largest prescalar does not work its out of range
+  }
+
+  if (in_range){
+    // find the timer values
+    timer_count = clock_cycles/prescalar; // the count for the entire period
+    //clampTimer(&timer_count); // clamp this value
+    pulse_count = (clock_cycles+get_offset())/prescalar*duty_cycle_target/max_duty_cycle; // the count where the pwm pin will be high
+    //clampTimer(&pulse_count); // clamp this value
+    
+    TIMSK2 |= B00000110; // Enable compare interrupts A and B
+
+  } else if (frequency_target<1) {
+    TIMSK2 |= B00000110; // Enable compare interrupts A and B
+    set_high_mask = 0; // pwm pin can not be set high
+    set_low_mask = ~pulse_mask;
+    timer_count = timer_top;
+  } else {
+    prescalar = prescalars[0];
+    iterationsInPeriod = clock_cycles/prescalar/timer_top;
+    iterationsInPulse = iterationsInPeriod*duty_cycle_target/max_duty_cycle;
+
+    TIMSK2 &= ~B00000100; // Enable compare interrupts A and B
+    set_high_mask = pulse_mask;
+    set_low_mask = ~pulse_mask;
+    timer_count = timer_top;
+  }
+
+  
+  // ensures interrupt B occurrs before A
+  if (pulse_count >= timer_count){
+    pulse_count = timer_count-1;
+  }
+
+  // update the timer values
+  OCR2A = timer_count;
+  OCR2B = pulse_count;
+
+  // update the prescalar
+  update_prescalar();
+}
+
+// update the prescalar to the current value 
+void update_prescalar(){ // update the prescalar
+  if (prescalar == 1){
+    TCCR2B = 0b00000001;
+  } else if (prescalar == 8){
+    TCCR2B = 0b00000010;
+  } else if (prescalar == 32){
+    TCCR2B = 0b00000011;
+  } else if (prescalar == 64){
+    TCCR2B = 0b00000100;
+  } else if (prescalar == 128){
+    TCCR2B = 0b00000101;
+  } else if (prescalar == 256){
+    TCCR2B = 0b00000110;
+  } else if (prescalar == 1024){
+    TCCR2B = 0b00000111;
+  }
+}
+
+// change the interval of the first encoder
+void update_enc1_interval(){ // update the interval 
+  enc1_interval_index++; // change to the next interval
+  if (enc1_interval_index >= enc1_intervals){
+    enc1_interval_index = 0;
+  }
+  enc1_interval = enc1_interval_vec[enc1_interval_index]; // update the interval
+  update_screen = 1; // screen needs to be updated
+}
+
+// change the interval of the second encoder
+void update_enc2_interval(){ // update the interval 
+  enc2_interval_index++; // change to the next interval
+  if (enc2_interval_index >= enc2_intervals){
+    enc2_interval_index = 0;
+  }
+  enc2_interval = enc2_interval_vec[enc2_interval_index]; // update the interval
+  update_screen = 1; // screen needs to be updated
+}
+
+// update the screen with current data
+void updateScreen(void) {
   // setup to write text on screen
   display.clearDisplay(); 
   display.setTextSize(2);
@@ -496,3 +491,19 @@ void testdrawstyles(void) {
   // update the display
   display.display();
 }
+
+// Calculate the offset used to correct the duty cycle
+uint8_t get_offset(){
+  return offset_at_max*frequency_target/max_frequency;
+}
+
+// Clamp the compare values
+void clampTimer(uint16_t val){ // ensures that the value of the timer is less than the top value
+  if (val > timer_top){
+    val = timer_top;
+  }
+}
+
+
+
+
